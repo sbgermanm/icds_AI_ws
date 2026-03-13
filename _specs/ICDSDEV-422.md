@@ -257,12 +257,13 @@ SELECT
 
     t.restore_minus_etr_minutes,
 
-    CASE WHEN t.restore_minus_etr_minutes IS NULL THEN NULL
-         WHEN t.restore_minus_etr_minutes < 0 THEN '-'
-         ELSE ''
-    END ||
-    LPAD(FLOOR(ABS(t.restore_minus_etr_minutes) / 60), 2, '0') || ':' ||
-    LPAD(MOD(ABS(t.restore_minus_etr_minutes), 60), 2, '0')      AS restore_minus_etr_hhmm,
+    CASE
+        WHEN t.restore_minus_etr_minutes IS NULL THEN NULL
+        ELSE
+            CASE WHEN t.restore_minus_etr_minutes < 0 THEN '-' ELSE '' END ||
+            LPAD(FLOOR(ABS(t.restore_minus_etr_minutes) / 60), 2, '0') || ':' ||
+            LPAD(MOD(ABS(t.restore_minus_etr_minutes), 60), 2, '0')
+    END                                                               AS restore_minus_etr_hhmm,
 
     CASE WHEN t.restore_minus_etr_minutes < -90 THEN 'Y' ELSE ' ' END
                                                                   AS etr_set_too_late,
@@ -281,14 +282,10 @@ SELECT
     END                                                           AS etr_change_violation,
 
     CASE
-        WHEN (CASE WHEN t.restore_minus_etr_minutes < -90 THEN 'Y' ELSE ' ' END) = 'Y'
-          OR (CASE WHEN t.restore_minus_etr_minutes >  15 THEN 'Y' ELSE ' ' END) = 'Y'
-          OR (CASE
-                WHEN NVL(cc.etr_change_count, 0) >
-                     CASE WHEN t.outage_minutes <= 120 THEN 1 ELSE 2 END
-                THEN 'Y' ELSE ' '
-              END) = 'Y'
-        THEN 'N'
+        WHEN t.restore_minus_etr_minutes < -90                        THEN 'N'
+        WHEN t.restore_minus_etr_minutes >  15                        THEN 'N'
+        WHEN NVL(cc.etr_change_count, 0) >
+             CASE WHEN t.outage_minutes <= 120 THEN 1 ELSE 2 END      THEN 'N'
         ELSE 'Y'
     END                                                           AS well_managed_etr
 

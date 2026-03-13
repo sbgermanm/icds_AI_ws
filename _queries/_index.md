@@ -74,6 +74,8 @@
 | CustomerDAO getAutocompleteField | `CustomerDAO.java` | Autocompletado de campo de cliente (dirección, nombre, etc.) | MV_CLIENTE_SIC(_ME) | codZona, sField, valueField |
 | CallDAO getCallByCustomer | `CallDAO.java` | Historial de llamadas de un cliente (activas + históricas) | MV_LLAMADA_PROCESADA, MV_H_LLAMADA_PROCESADA | idContract (CONTRACTACCT_NUM) |
 
+| Well-Managed ETRs (ICDSDEV-422) | `ICDSDEV-422.sql` | Evalúa si el ETR de cada incidencia EI fue bien gestionado: ETR demasiado optimista (>15 min tarde), demasiado conservador (>90 min antes), o demasiados cambios de ETR. Incluye incidencias activas e históricas según `lstNotifStages`. | MV_INCIDENCIA, MV_H_INCIDENCIA, MV_NOTIF_CODE_EG, MV_CARA_ZONA, MV_BRIGADA, MV_TIP_FASE_INCID, MV_COCHE_INCIDENCIA, MV_H_COCHE_INCIDENCIA, OMS_SAP_OUTAGE@REPOS_01_OMS | iOpCo, dStartDate, dEndDate, lstDivisions, lstCircuits, lstOpenStages |
+
 ---
 
 ## Tablas Oracle conocidas
