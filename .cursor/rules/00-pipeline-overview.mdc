@@ -1,0 +1,40 @@
+---
+description: Visión general del pipeline de agentes y cómo fluye el trabajo
+alwaysApply: true
+---
+
+# Pipeline de Agentes - Visión General
+
+## Proyectos
+- **Backend Java**: Ver ruta en `_arquitectura/paths.md`
+- **Frontend Angular**: Ver ruta en `_arquitectura/paths.md`
+- **Queries Oracle**: Carpeta `_queries/` en este workspace
+- **Specs de tareas**: Carpeta `_specs/` en este workspace
+
+## Flujo de trabajo
+
+```
+Ticket Jira
+    ↓
+[Agente 01 - Jira Refiner]
+    → genera _specs/PROJ-XXXX.md
+    ↓
+[Agente 02 - Oracle Query]
+    → lee _specs/PROJ-XXXX.md
+    → lee _queries/_index.md
+    → genera _queries/PROJ-XXXX.sql
+    ↓
+[Agente 03 - Java Backend]
+    → lee _specs/PROJ-XXXX.md
+    → lee _queries/PROJ-XXXX.sql
+    → crea endpoint en el proyecto Java
+    ↓
+[Agente 04 - Angular Frontend]
+    → lee _specs/PROJ-XXXX.md
+    → conecta con el endpoint creado
+    → crea componente en el proyecto Angular
+```
+
+## Regla fundamental
+Antes de crear cualquier cosa, **leer siempre** lo que ya existe.
+Nunca inventar patrones: seguir los que hay en el proyecto.

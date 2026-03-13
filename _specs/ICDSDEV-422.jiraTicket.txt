@@ -1,0 +1,200 @@
+
+Ticket Jira:
+---
+Title: Well‑Managed ETRs (Estimated Time of Restoration)
+
+Summary
+
+As an Electric Operations Manager/Senior Manager
+I need the ability to determine whether customer‑facing ETRs are well‑managed
+so that we deliver accurate, stable expectations to customers during outages and avoid negative experiences (e.g., unnecessary travel, lodging, or medical disruptions).
+
+Acceptance Criteria (Done when):
+
+An “ETR change” occurs only when the new ETR value differs from the previous value for the same incident (idempotent updates do not count). The first change is free; only the second and above are counted toward the limit.
+
+Allowed counted changes: 1 when outage duration ≤ 120 minutes, 2 when > 120 minutes.
+
+Restoration that is “too early” will be marked as not well-well managed. Acceptable time: 0 to 15 minutes past ETR. If the restoration time is more than 15 mimutes past the ETR, then you set the ETR too early.
+
+Restoration that is “too late” will be marked as not well-well managed. If the restoration time is more than 90 minutes earlier than the ETR, then you set the ETR too late.
+
+This report will have this columns. Also add operating company, division, stage, and crew.
+
+CONT_INCIDENCIA ETR START_TIME RESTORE_TIME OUTAGE_MINUTES OUTAGE_HHMM RESTORE_MINUS_ETR_MINUTES RESTORE_MINUS_ETR_HHMM ETR_SET_TOO_LATE ETR_SET_TOO_EARLY ETR_CHANGE_COUNT ALLOWED_CHANGES ETR_CHANGE_VIOLATION WELL_MANAGED_ETR
+1532427 10-FEB-26 17:00 10-FEB-26 14:58 12-FEB-26 11:56 2698 44:58 2577 42:57 Y 1 2 N
+1532454 12-FEB-26 13:45 12-FEB-26 12:06 12-FEB-26 12:33 27 00:27 -71 -01:11 0 1 Y
+1532457 12-FEB-26 14:15 12-FEB-26 12:36 12-FEB-26 12:43 8 00:08 -91 -01:31 Y 0 1 N
+1532459 12-FEB-26 14:00 12-FEB-26 12:49 12-FEB-26 13:53 63 01:03 -7 -00:07 2 1 Y N
+
+The report will only show Electric Incidents (EIs).
+
+The report should have the standard report filters such as OpCo, Start/End dates, division, circuit/storm areas, incident status checkbox.
+
+The user should be able to customize their reports like the other standard electical reports.
+
+The report results will have multi-sorting, export to Excel, refresh/auto-refresh, report size maginfiying glass, column selection, and the ability to drill into an incident, and search bar.
+
+The user will be able to view the incident on the map like the other standard reports.
+
+Query:
+"WITH main_t AS (
+SELECT
+inc.cont_incidencia,
+inc.fec_prevista AS etr,
+inc.fec_ini_incidencia AS start_time,
+inc.malfunc_end AS restore_time,
+
+        ABS(ROUND((NVL(inc.malfunc_end, SYSDATE) - inc.fec_ini_incidencia) * 1440))
+            AS outage_minutes,
+
+
+
+        CASE
+            WHEN inc.fec_prevista IS NULL THEN NULL
+            ELSE ROUND((NVL(inc.malfunc_end, SYSDATE) - inc.fec_prevista) * 1440)
+        END AS restore_minus_etr_minutes
+    FROM mv_incidencia inc
+    WHERE inc.cont_incidencia IN (1532427, 1532454, 1532457, 1532459)
+
+),
+
+/_ ----------------------------------------------------------------------
+Option B: ETR Changes from OMS_SAP_OUTAGE@repos_01_oms
+---------------------------------------------------------------------- _/
+
+ordered AS (
+SELECT
+so.incident_num,
+NULLIF(TRIM(so.etr), '') AS etr_val,
+
+        TO_DATE(
+            REGEXP_SUBSTR(so.message_id, '_(\d{14})_', 1, 1, NULL, 1),
+            'YYYYMMDDHH24MISS'
+        ) AS message_ts,
+
+        so.message_id
+    FROM OMS_SAP_OUTAGE@repos_01_oms so
+    WHERE so.incident_num IN (1532427, 1532454, 1532457, 1532459)
+
+),
+
+lagged AS (
+SELECT
+incident_num,
+etr_val,
+message_ts,
+message_id,
+LAG(etr_val) OVER (
+PARTITION BY incident_num
+ORDER BY message_ts, message_id
+) AS prev_etr
+FROM ordered
+),
+
+changes AS (
+SELECT
+incident_num,
+etr_val,
+message_ts,
+message_id,
+CASE
+WHEN etr_val IS NOT NULL
+AND (prev_etr IS NULL OR etr_val <> prev_etr)
+THEN 1
+ELSE 0
+END AS is_change
+FROM lagged
+),
+
+change_counts AS (
+SELECT
+incident_num,
+
+        SUM(is_change) - 1 AS etr_change_count,
+
+        MAX(CASE WHEN is_change = 1 THEN message_ts END) AS last_etr_change_time,
+        MAX(etr_val) KEEP (DENSE_RANK LAST ORDER BY message_ts, message_id)
+            AS last_etr_value
+    FROM changes
+    GROUP BY incident_num
+
+)
+
+SELECT
+t.cont_incidencia,
+t.etr,
+t.start_time,
+t.restore_time,
+t.outage_minutes,
+
+    LPAD(FLOOR(t.outage_minutes / 60), 2, '0') || ':' ||
+    LPAD(MOD(t.outage_minutes, 60), 2, '0') AS outage_hhmm,
+
+    t.restore_minus_etr_minutes,
+
+
+
+    CASE WHEN t.restore_minus_etr_minutes < 0 THEN '-' ELSE '' END ||
+    LPAD(FLOOR(ABS(t.restore_minus_etr_minutes) / 60), 2, '0') || ':' ||
+    LPAD(MOD(ABS(t.restore_minus_etr_minutes), 60), 2, '0')
+        AS restore_minus_etr_hhmm,
+
+
+
+    CASE WHEN t.restore_minus_etr_minutes < -90 THEN 'Y' ELSE ' ' END
+        AS etr_set_too_late,
+
+
+
+    CASE WHEN t.restore_minus_etr_minutes > 15 THEN 'Y' ELSE ' ' END
+        AS etr_set_too_early,
+
+
+
+    NVL(cc.etr_change_count, 0) AS etr_change_count,
+
+    /* ============================================================
+       Rule 3: Acceptable ETR Change Limit
+       Outage duration is <=120 minutes  -> allowed_changes = 1
+       Outage duration is >120 minutes   -> allowed_changes = 2
+    ============================================================ */
+
+    CASE
+        WHEN t.outage_minutes <= 120 THEN 1
+        ELSE 2
+    END AS allowed_changes,
+
+    CASE
+        WHEN NVL(cc.etr_change_count, 0) >
+             CASE
+                 WHEN t.outage_minutes <= 120 THEN 1
+                 ELSE 2
+             END
+        THEN 'Y'
+        ELSE ' '
+    END AS etr_change_violation,
+
+    /* ============================================================
+       Overall ETR Quality:
+       Set to 'N' if any rule is violated; otherwise 'Y'.
+    ============================================================ */
+    CASE
+        WHEN (CASE WHEN t.restore_minus_etr_minutes < -90 THEN 'Y' ELSE ' ' END) = 'Y'
+          OR (CASE WHEN t.restore_minus_etr_minutes > 15 THEN 'Y' ELSE ' ' END) = 'Y'
+          OR (CASE
+                 WHEN NVL(cc.etr_change_count, 0) >
+                      CASE
+                          WHEN t.outage_minutes <= 120 THEN 1
+                          ELSE 2
+                      END
+                 THEN 'Y' ELSE ' '
+              END) = 'Y'
+        THEN 'N'
+        ELSE 'Y'
+    END AS well_managed_etr
+
+FROM main_t t
+LEFT JOIN change_counts cc
+ON cc.incident_num = t.cont_incidencia
+ORDER BY t.cont_incidencia"

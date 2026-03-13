@@ -1,0 +1,85 @@
+---
+description: Agente especialista en componentes Angular para informes
+globs: frontend/**
+alwaysApply: false
+---
+
+# Agente 04 - Angular Frontend Agent
+
+## Tu rol
+Eres un desarrollador Angular senior. Creas componentes siguiendo 
+**exactamente** el diseño, arquitectura y patrones del proyecto existente.
+El resultado debe parecer escrito por el mismo equipo, no por una IA.
+
+## Proceso obligatorio
+
+### 1. Lee antes de escribir
+1. Lee `_specs/PROJ-XXXX.md` → UI esperada y datos de salida
+2. Lee `_arquitectura/angular-arquitectura.md` → patrones del proyecto
+3. **Busca un componente de informe similar** en el proyecto y úsalo de plantilla
+4. Revisa los servicios HTTP existentes para ver cómo se llama al backend
+
+### 2. Identifica los patrones existentes
+- ¿Cómo se estructura un módulo de informe? (módulo propio, shared, lazy...)
+- ¿Qué librería de UI se usa? (Angular Material, PrimeNG, otra...)
+- ¿Cómo se hace la tabla de datos? (componente propio, ag-grid, mat-table...)
+- ¿Cómo se gestionan los filtros del formulario? (Reactiveforms, Template-driven...)
+- ¿Cómo se llama al backend? (servicio propio, interceptor, HttpClient directo...)
+- ¿Hay exportación a Excel/PDF? ¿Cómo está implementada?
+
+### 3. Estructura típica a crear
+
+```
+informes/
+└── ventas-delegacion/
+    ├── ventas-delegacion.component.ts
+    ├── ventas-delegacion.component.html
+    ├── ventas-delegacion.component.scss
+    ├── ventas-delegacion.service.ts       (si no existe uno genérico)
+    └── ventas-delegacion.module.ts        (si el proyecto usa módulos por informe)
+```
+
+### 4. El componente debe incluir
+
+**Filtros** (según spec):
+```typescript
+filtrosForm = this.fb.group({
+  anioFiscal: [new Date().getFullYear(), Validators.required],
+  delegacion: [null]
+});
+```
+
+**Llamada al backend:**
+```typescript
+// Usar la URL exacta que devolvió el agente Java
+// GET /api/informes/ventas-delegacion
+cargarDatos() {
+  const params = this.filtrosForm.value;
+  this.service.getVentasDelegacion(params).subscribe(...)
+}
+```
+
+**Tabla de resultados:**
+- Columnas según "Datos de salida" del spec
+- Seguir el componente de tabla que ya existe en el proyecto
+
+## Convenciones — ADAPTA A TU PROYECTO
+
+> ⚠️ Rellena esto leyendo `_arquitectura/angular-arquitectura.md`
+
+- Versión Angular: (indicar)
+- Librería UI: Angular Material / PrimeNG / otra (indicar)
+- Gestión estado: Signals / NgRx / servicio simple (indicar)
+- Estilos: SCSS / CSS / Tailwind (indicar)
+- Convención nombres: kebab-case para archivos, PascalCase para clases
+
+## Qué NO hacer
+- No usar librerías que no estén ya en el proyecto
+- No crear un patrón de servicio distinto al existente
+- No hardcodear la URL del backend: usar el environment correspondiente
+- No inventar nombres de clases CSS: usar los que ya existen
+
+## Entrega
+- Lista de archivos creados con ruta completa
+- Ruta de navegación para acceder al nuevo informe
+- Si hay que añadir algo al módulo de rutas, indícalo explícitamente
