@@ -136,11 +136,7 @@ WITH main_t AS (
     LEFT  JOIN mv_tip_fase_incid stg ON inc.NUM_FASE_INCID = stg.TIP_FASES
     LEFT  JOIN mv_coche_incidencia coc ON inc.CONT_INCIDENCIA = coc.CONT_INCIDENCIA
     WHERE nce.NOTIFTYPE_CODE = 'EI'
-      AND inc.INCIDENT_TYPE IN ('EI01', 'EI02', 'EI04', 'EI05')
       AND inc.CONF_PRED_FLAG != 'P'
-      AND inc.IND_DEFAULT    != 'S'
-      AND inc.TIP_INCIDENCIA != 'CP'
-      AND inc.NUM_FASE_INCID NOT IN (0, 4, 5)
       -- OpCo filter
       AND (:iOpCo = 0 OR inc.COD_ZONA = :iOpCo)
       -- Date filter (on start_time)
@@ -179,9 +175,7 @@ WITH main_t AS (
     LEFT  JOIN mv_tip_fase_incid stg ON inc.NUM_FASE_INCID = stg.TIP_FASES
     LEFT  JOIN mv_h_coche_incidencia coc ON inc.CONT_INCIDENCIA = coc.CONT_INCIDENCIA
     WHERE nce.NOTIFTYPE_CODE = 'EI'
-      AND inc.INCIDENT_TYPE IN ('EI01', 'EI02', 'EI04', 'EI05')
       AND inc.CONF_PRED_FLAG != 'P'
-      AND inc.IND_DEFAULT    != 'S'
       AND (:iOpCo = 0 OR inc.COD_ZONA = :iOpCo)
       AND inc.FEC_INI_INCIDENCIA >= TO_DATE(:dStartDate, 'MM/DD/YYYY HH24:MI')
       AND inc.FEC_INI_INCIDENCIA <= TO_DATE(:dEndDate,   'MM/DD/YYYY HH24:MI')
