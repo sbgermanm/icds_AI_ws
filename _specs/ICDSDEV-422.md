@@ -93,9 +93,8 @@ WELL_MANAGED_ETR = 'Y'  otherwise
 | Start Date | `:dStartDate` | VARCHAR | `MM/DD/YYYY HH24:MI` |
 | End Date | `:dEndDate` | VARCHAR | `MM/DD/YYYY HH24:MI` |
 | Divisions | `:lstDivisions` | LIST | Optional; `COD_BRIGADA` list |
-| Circuits / Storm Areas | `:lstCircuits` / `:lstStormAreas` | LIST | Optional; mutual exclusive |
-| Incident Status | `:bOpen` / `:bClosed` | BOOLEAN | Checkboxes to include open and/or closed |
-| Notification Stages | `:lstNotifStages` | LIST | Optional |
+| Circuits / Storm Areas | `:lstCircuits` / `:lstStormAreas` | LIST | Optional; mutually exclusive |
+| Notification Stages | `:lstNotifStages` | LIST\<Integer\> | Values 0–5. Stages **< 5** → query `MV_INCIDENCIA` (open). Stage **= 5** → query `MV_H_INCIDENCIA` (closed). Both groups included when list contains values from each range. |
 
 ---
 
@@ -113,7 +112,7 @@ WELL_MANAGED_ETR = 'Y'  otherwise
 ```sql
 WITH main_t AS (
     /* ---------------------------------------------------------------
-       Active incidents
+       Open incidents — included when lstNotifStages contains any value < 5
     --------------------------------------------------------------- */
     SELECT
         inc.cont_incidencia,
@@ -151,11 +150,13 @@ WITH main_t AS (
       AND (:lstDivisions IS NULL OR inc.COD_BRIGADA IN (:lstDivisions))
       -- Circuit filter (optional)
       AND (:lstCircuits IS NULL OR inc.CIRCUIT IN (:lstCircuits))
+      -- Stage filter: only stages < 5 belong to the open table
+      AND inc.NUM_FASE_INCID IN (:lstOpenStages)   -- SqlBuilder extracts values < 5 from lstNotifStages
 
     UNION ALL
 
     /* ---------------------------------------------------------------
-       Archived / closed incidents
+       Closed / archived incidents — included when lstNotifStages contains 5
     --------------------------------------------------------------- */
     SELECT
         inc.cont_incidencia,
@@ -186,6 +187,7 @@ WITH main_t AS (
       AND inc.FEC_INI_INCIDENCIA <= TO_DATE(:dEndDate,   'MM/DD/YYYY HH24:MI')
       AND (:lstDivisions IS NULL OR inc.COD_BRIGADA IN (:lstDivisions))
       AND (:lstCircuits IS NULL OR inc.CIRCUIT IN (:lstCircuits))
+      -- Closed table only matches stage 5; no additional stage filter needed here
 ),
 
 /* ------------------------------------------------------------------
@@ -302,7 +304,10 @@ ORDER BY t.cont_incidencia
 ```
 
 ### Notes on the query
-- The `UNION ALL` combines `MV_INCIDENCIA` (open) and `MV_H_INCIDENCIA` (archived). The `bOpen` / `bClosed` checkboxes in the UI control which branches are included — the `SqlBuilder` will conditionally include each branch.
+- **Table routing via `lstNotifStages`**: the `SqlBuilder` splits the incoming list into two sub-lists:
+  - `lstOpenStages` = values from `lstNotifStages` where value **< 5** → used in the `MV_INCIDENCIA` branch with `AND inc.NUM_FASE_INCID IN (:lstOpenStages)`.
+  - If `lstNotifStages` contains **5** → the `MV_H_INCIDENCIA` branch is appended via `UNION ALL`; otherwise that branch is omitted entirely.
+  - If neither sub-list is populated (empty selection), the query returns no rows.
 - `OMS_SAP_OUTAGE@REPOS_01_OMS` is accessed via DB-link. For CMP (OpCo = 3) this may need to be `OMS_SAP_OUTAGE@REPOS_02_OMS` — confirm with DBA.
 - `GREATEST(..., 0)` guards against negative counts if data has anomalies.
 - `restore_minus_etr_hhmm` uses NULL guard to avoid formatting errors when ETR is NULL.
@@ -347,15 +352,24 @@ public class WellManagedEtrReportPOJO {
 
 Fields:
 ```
-int    codeCompany         → :iOpCo   (normalized via getNormalizedCompanyCode())
-String startDate           → :dStartDate  ("MM/DD/YYYY HH24:MI")
-String endDate             → :dEndDate
-List<String> lstDivisions  → :lstDivisions
-List<String> lstCircuits   → :lstCircuits
-boolean bOpen              → include MV_INCIDENCIA branch
-boolean bClosed            → include MV_H_INCIDENCIA branch
-List<String> lstNotifStages
+int           codeCompany      → :iOpCo   (normalized via getNormalizedCompanyCode())
+String        startDate        → :dStartDate  ("MM/DD/YYYY HH24:MI")
+String        endDate          → :dEndDate
+List<String>  lstDivisions     → :lstDivisions
+List<String>  lstCircuits      → :lstCircuits
+List<Integer> lstNotifStages   → values 0–5; drives both table selection and stage filter
 ```
+
+Helper methods (used by `SqlBuilder`, not bound as SQL parameters directly):
+```java
+// Returns values < 5 — used in the MV_INCIDENCIA branch
+public List<Integer> getOpenStages()  { ... }
+
+// Returns true if 5 is present — controls whether MV_H_INCIDENCIA branch is included
+public boolean includeClosedIncidents() { ... }
+```
+
+`buildParameters()` binds `:lstOpenStages` (from `getOpenStages()`) and the standard filters. The closed-branch inclusion is handled structurally in `SqlBuilder`, not as a bind variable.
 
 Implements `buildParameters()` returning `MapSqlParameterSource`.
 
@@ -434,7 +448,7 @@ Follows the same structure as other standard electrical reports.
 ### Features to implement (standard)
 | Feature | Notes |
 |---------|-------|
-| Filter panel | OpCo, Start/End dates, Division, Circuit/Storm Area, Incident Status (open/closed checkboxes) |
+| Filter panel | OpCo, Start/End dates, Division, Circuit/Storm Area, Notification Stages (multi-select 0–5; stages < 5 = open incidents, stage 5 = closed incidents) |
 | User-customizable report | Like other standard electrical reports — uses existing ad-hoc/layout persistence |
 | Multi-column sorting | Client-side or server-side |
 | Export to Excel | Existing Excel export service |
@@ -481,7 +495,7 @@ POST /icds/api/reports/well-managed-etr
 |---|----------|-------|
 | Q1 | For CMP (OpCo=3), should `OMS_SAP_OUTAGE` use `@REPOS_02_OMS`? Confirm DB-link name with DBA. | DBA |
 | Q2 | Should incidents without an ETR (`FEC_PREVISTA IS NULL`) be included in the report with blank ETR columns, or excluded entirely? | Business |
-| Q3 | `bOpen` / `bClosed` filter: if neither is checked, should the report return empty or default to both? | UX |
+| Q3 | `lstNotifStages` filter: if the list is empty (no stages selected), should the report return empty or default to all stages? | UX |
 | Q4 | Is `MV_COCHE_INCIDENCIA` always a 1:1 with `CONT_INCIDENCIA`, or can there be multiple crew rows? If multiple, take the latest assignment. | DBA |
 | Q5 | Storm Area filter: confirm whether it maps to `MV_STORM_BREAKOUT_CIRCUIT` or a separate filter field. | Dev |
 
