@@ -17,7 +17,8 @@
 --   :dStartDate    -> Fecha inicio  (VARCHAR2, 'MM/DD/YYYY HH24:MI')
 --   :dEndDate      -> Fecha fin     (VARCHAR2, 'MM/DD/YYYY HH24:MI')
 --   :lstDivisions  -> Lista de COD_BRIGADA (LIST<VARCHAR>, opcional)
---   :lstCircuits   -> Lista de circuitos   (LIST<VARCHAR>, opcional)
+--   :lstCircuits   -> Lista de circuitos   (LIST<VARCHAR>, opcional; mutuamente exclusivo con lstStormAreas)
+--   :lstStormAreas -> Lista de IDs de storm area (LIST<VARCHAR>, opcional; mutuamente exclusivo con lstCircuits)
 --   :lstOpenStages -> Subconjunto de lstNotifStages con valores < 5
 --                     (extraído por el SqlBuilder; este branch
 --                      se omite en el UNION si la lista está vacía)
@@ -67,7 +68,14 @@ WITH main_t AS (
       AND inc.FEC_INI_INCIDENCIA >= TO_DATE(:dStartDate, 'MM/DD/YYYY HH24:MI')
       AND inc.FEC_INI_INCIDENCIA <= TO_DATE(:dEndDate,   'MM/DD/YYYY HH24:MI')
       AND (:lstDivisions IS NULL OR inc.COD_BRIGADA IN (:lstDivisions))
-      AND (:lstCircuits  IS NULL OR inc.CIRCUIT     IN (:lstCircuits))
+      -- Circuit / Storm Area filter (mutually exclusive — SqlBuilder injects one):
+      -- Option A · filter by circuit list:
+      --   AND (:lstCircuits IS NULL OR inc.CIRCUIT IN (:lstCircuits))
+      -- Option B · filter by storm area (uses MV_STORM_BREAKOUT_CIRCUIT_ME for CMP):
+      --   AND EXISTS (SELECT 1 FROM MV_STORM_BREAKOUT_CIRCUIT sbc
+      --               WHERE sbc.CIRCUIT = inc.CIRCUIT
+      --                 AND sbc.ID_SB_AREA IN (:lstStormAreas))
+      AND (:lstCircuits  IS NULL OR inc.CIRCUIT IN (:lstCircuits))
       AND inc.NUM_FASE_INCID IN (:lstOpenStages)
 
     UNION ALL
@@ -104,7 +112,14 @@ WITH main_t AS (
       AND inc.FEC_INI_INCIDENCIA >= TO_DATE(:dStartDate, 'MM/DD/YYYY HH24:MI')
       AND inc.FEC_INI_INCIDENCIA <= TO_DATE(:dEndDate,   'MM/DD/YYYY HH24:MI')
       AND (:lstDivisions IS NULL OR inc.COD_BRIGADA IN (:lstDivisions))
-      AND (:lstCircuits  IS NULL OR inc.CIRCUIT     IN (:lstCircuits))
+      -- Circuit / Storm Area filter (mutually exclusive — SqlBuilder injects one):
+      -- Option A · filter by circuit list:
+      --   AND (:lstCircuits IS NULL OR inc.CIRCUIT IN (:lstCircuits))
+      -- Option B · filter by storm area (uses MV_STORM_BREAKOUT_CIRCUIT_ME for CMP):
+      --   AND EXISTS (SELECT 1 FROM MV_STORM_BREAKOUT_CIRCUIT sbc
+      --               WHERE sbc.CIRCUIT = inc.CIRCUIT
+      --                 AND sbc.ID_SB_AREA IN (:lstStormAreas))
+      AND (:lstCircuits  IS NULL OR inc.CIRCUIT IN (:lstCircuits))
 
 ),
 
