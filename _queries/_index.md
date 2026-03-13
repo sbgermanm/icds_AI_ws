@@ -413,3 +413,431 @@ AND (SELECT COUNT(AC.CONT_INCIDENCIA)
      WHERE AC.CONT_INCIDENCIA = INC.CONT_INCIDENCIA
      AND AC.CRITICAL_CUST IN ('0001', 'M', 'J')) > 0
 ```
+
+---
+
+## Queries de referencia externas (basic_queries)
+
+> Estas queries no pertenecen al código del proyecto. Son queries SQL de referencia
+> almacenadas en `/ICDS_images/basic_queries/basic_queries/`. Úsalas como guía
+> si no encuentras un ejemplo similar en las queries del proyecto.
+
+---
+
+### REF-01 · Ticket completo de incidencia activa (CTE)
+
+**Fichero:** `main_queries/Ticket_Query_RepposV16_Open.sql`  
+Obtiene todos los campos de una incidencia activa: tipo, crew, dispositivo (device/transformer), ETR, color de alerta, clientes out, llamadas, datos geográficos. Patrón maestro para el "ticket" de REPOS.
+
+```sql
+WITH cte_ticket AS (
+  SELECT
+    INC.CONT_INCIDENCIA              AS REPOS_ID,
+    NCE.NOTIFTYPE_CODE               AS INCIDENT_TYPE,
+    CASE WHEN NCE.NOTIFTYPE_CODE = 'EI' AND INC.IND_ALTA = 'P' AND INC.IND_MAT = 'S' THEN 'BES'
+         WHEN NCE.NOTIFTYPE_CODE = 'EI' AND INC.IND_ALTA = 'P'                         THEN 'IN'
+         WHEN NCE.NOTIFTYPE_CODE = 'EI' AND INC.CONF_PRED_FLAG = 'P'                   THEN 'PR'
+         WHEN NCE.NOTIFTYPE_CODE = 'EI' AND INC.IND_ALTA = 'S' AND INC.CONF_PRED_FLAG = 'I' THEN 'PI'
+         ELSE NCE.NOTIFTYPE_CODE
+    END AS TYPE,
+    NCE.NOTIF_CODE, NCE.NOTIF_TEXT   AS CODING,
+    INC.NUM_FASE_INCID || '-' || STAGES.DES_TIP_FASES AS STAGE,
+    NVL(CREW.STATUS,'INIT')          AS CREW_STATUS,
+    INC.COD_ZONA AS OPCO, INC.COD_BRIGADA AS DIVISION_NO, DIV.DES_BRIGADA AS DIVISION,
+    NVL(INC.numcalls,0)              AS CALLS,
+    NVL(INC.NUMCUSTOUT,0)            AS CUSTOMERS_OUT,
+    NVL(INC.REAL_NUMCUSTOUT,0)       AS CUSTOMERS_OUT_INIT,
+    TO_CHAR(INC.FEC_INI_INCIDENCIA,'MM/DD/YYYY HH24:MI:SS') AS START_DATE,
+    TO_CHAR(INC.FEC_PREVISTA,       'MM/DD/YYYY HH24:MI:SS') AS ETR,
+    CASE WHEN INC.FEC_PREVISTA IS NULL        THEN ''
+         WHEN SYSDATE > INC.FEC_PREVISTA      THEN 'RED'
+         WHEN (SYSDATE + INTERVAL '30' MINUTE) > INC.FEC_PREVISTA THEN 'PINK'
+         ELSE 'WHITE' END                     AS WARNING_COLOR,
+    INC.CRITCUSTOUT, INC.POLICE_FIRE_911      AS POLICE_FIRE,
+    INC.B1NAME, INC.B2NAME, INC.B3NAME
+  FROM mv_incidencia inc
+  INNER JOIN mv_NOTIF_CODE_EG nce     ON INC.INCIDENT_TYPE = NCE.NOTIF_CODE
+  INNER JOIN MV_TIP_FASE_INCID stages ON INC.NUM_FASE_INCID = STAGES.TIP_FASES
+  LEFT  JOIN mv_brigada div           ON INC.COD_BRIGADA  = DIV.COD_BRIGADA
+  LEFT  JOIN mv_substationcircuit sub ON INC.CIRCUIT       = SUB.CIRCUIT
+  LEFT  JOIN mv_coche_incidencia crew ON INC.CONT_INCIDENCIA = CREW.CONT_INCIDENCIA
+  LEFT  JOIN mv_elem_mp dvc           ON inc.B1NAME = dvc.B1NAME AND inc.B2NAME = dvc.B2NAME
+                                     AND inc.B3NAME = dvc.B3NAME AND INC.ELNAME = dvc.ELNAME
+  LEFT  JOIN mv_posicion trns         ON INC.COD_ELEMENTO = TRNS.CODIGO_CTM
+),
+cte_outage AS (
+  SELECT REPOS_ID, SUM(AFFECTED_CUST) AS AFFECTED_CUST
+  FROM (
+    SELECT AI.CONT_INCIDENCIA AS REPOS_ID, AI.AFFECTED_CUST, AI.FEC_HASTA AS END_TIME,
+           DENSE_RANK() OVER (PARTITION BY AI.CONT_INCIDENCIA, AI.COD_INSTAL_USUARIO
+                              ORDER BY AI.FEC_DESDE) AS MY_RANK
+    FROM mv_ambito_incid ai
+  )
+  WHERE my_rank = 1 AND END_TIME IS NULL  -- transformadores aún sin restaurar
+  GROUP BY REPOS_ID
+)
+SELECT tick.*, NVL(outage.affected_cust,0) AS AFFECTED_CUST
+FROM cte_ticket tick
+LEFT JOIN cte_outage outage ON tick.REPOS_ID = outage.REPOS_ID
+LEFT JOIN mv_poblacion twn  ON tick.cod_poblacion = TWN.COD_POBLACION AND tick.opco = TWN.COD_ZONA
+LEFT JOIN mv_provincia cty  ON TWN.COD_PROVINCIA  = CTY.COD_PROVINCIA
+WHERE tick.REPOS_ID = :reposId;
+```
+
+---
+
+### REF-02 · Clientes afectados sin doble-conteo de transformadores (DENSE_RANK)
+
+**Fichero:** `transformer_queires/Ambito_Incid_Fundamentals.sql`  
+Un transformador puede aparecer varias veces en `MV_AMBITO_INCID` si se restauró y volvió a caer dentro del mismo incidente. `DENSE_RANK = 1` elige la primera vez que salió (FEC_DESDE mínimo) y evita sumar doble.
+
+```sql
+WITH cte_outage AS (
+  SELECT
+    AI.CONT_INCIDENCIA                                                          AS REPOS_ID,
+    AI.AFFECTED_CUST,
+    AI.FEC_HASTA,
+    DENSE_RANK() OVER (PARTITION BY AI.CONT_INCIDENCIA, AI.COD_INSTAL_USUARIO
+                       ORDER BY AI.FEC_DESDE)                                   AS MY_RANK
+  FROM mv_ambito_incid ai
+)
+SELECT REPOS_ID, SUM(AFFECTED_CUST) AS TOTAL_AFFECTED
+FROM cte_outage
+WHERE my_rank = 1
+  AND FEC_HASTA IS NULL   -- quitar esta condición para incluir restaurados
+GROUP BY REPOS_ID;
+```
+
+> **Regla clave**: usar siempre `DENSE_RANK = 1` sobre `(CONT_INCIDENCIA, COD_INSTAL_USUARIO)` cuando se suman `AFFECTED_CUST` desde `MV_AMBITO_INCID`.
+
+---
+
+### REF-03 · EI05 (single outage / sin transformador) vs EI01/02/04 (transformer outage)
+
+**Fichero:** `main_queries/summary_tests/BasicCustomer_out.sql`  
+Diferencia crucial: `EI05` son incidencias de un solo cliente sin transformador → usar `MV_AFFECTED_CUSTOMER`. El resto (`EI01`, `EI02`, `EI04`) tienen transformador → usar `MV_AMBITO_INCID`.
+
+```sql
+-- EI01/02/04 (ACTIVOS): obtener clientes vía AMBITO_INCID
+SELECT INC.CONT_INCIDENCIA, AI.AFFECTED_CUST, AI.FEC_DESDE, AI.FEC_HASTA
+FROM MV_INCIDENCIA INC
+INNER JOIN MV_AMBITO_INCID AI ON INC.CONT_INCIDENCIA = AI.CONT_INCIDENCIA
+WHERE INC.INCIDENT_TYPE IN ('EI01','EI02','EI04')
+  AND INC.CONF_PRED_FLAG = 'I'
+  AND INC.IND_DEFAULT != 'S'
+  AND INC.NUM_FASE_INCID != 0;
+
+-- EI05 (ACTIVOS): obtener clientes vía AFFECTED_CUSTOMER
+SELECT INC.CONT_INCIDENCIA, INC.NUMCUSTOUT AS CUSTOMERS_OUT  -- siempre = 1
+FROM MV_INCIDENCIA INC
+INNER JOIN MV_AFFECTED_CUSTOMER AFF ON INC.CONT_INCIDENCIA = AFF.CONT_INCIDENCIA
+WHERE INC.INCIDENT_TYPE = 'EI05'
+  AND INC.CONF_PRED_FLAG = 'I'
+  AND INC.IND_DEFAULT != 'S';
+
+-- ARCHIVO: mismas queries con MV_H_INCIDENCIA / MV_H_AMBITO_INCID / MV_H_AFFECTED_CUSTOMER
+```
+
+---
+
+### REF-04 · UNION incidencias activas + archivadas
+
+**Fichero:** `union_open_incident_closed_incident.sql`  
+Patrón para unir datos de la tabla activa y la histórica en una sola consulta.
+
+```sql
+WITH cte_all_incid AS (
+  SELECT cont_incidencia, cod_zona, cod_brigada, fec_ini_incidencia, fec_fin_incidencia, 'open'   AS status
+  FROM mv_incidencia   WHERE cod_zona = :iOpCo
+  UNION ALL
+  SELECT cont_incidencia, cod_zona, cod_brigada, fec_ini_incidencia, fec_fin_incidencia, 'closed' AS status
+  FROM mv_h_incidencia WHERE cod_zona = :iOpCo
+)
+SELECT * FROM cte_all_incid
+WHERE fec_ini_incidencia >= TO_DATE(:dStartDate, 'MM/DD/YYYY HH24:MI');
+```
+
+---
+
+### REF-05 · Clientes servidos por transformador/circuito (window functions)
+
+**Fichero:** `main_queries/customers_served_by_transformer.sql`  
+Cuenta transformadores por circuito y clientes por transformador usando funciones analíticas.
+
+```sql
+SELECT
+  CLI.CUPS, CLI.COD_CONTRATO, POS.B3NAME AS TRANSFORMER,
+  COUNT(DISTINCT POS.B3NAME) OVER (PARTITION BY CLI.CIRCUIT) AS TRANSFORMER_COUNT_ON_CIRCUIT,
+  COUNT(CLI.CUPS)            OVER (PARTITION BY CLI.CIRCUIT, POS.CODIGO_CTM) AS CUSTOMERS_ON_TRANSFORMER
+FROM mv_cliente_sic cli
+INNER JOIN MV_POSICION pos ON CLI.COD_INSTAL_USUARIO = POS.CODIGO_CTM
+INNER JOIN mv_brigada div  ON POS.COD_BRIGADA = DIV.COD_BRIGADA
+INNER JOIN mv_poblacion twn ON CLI.COD_POBLACION = TWN.COD_POBLACION AND CLI.COD_ZONA = TWN.COD_ZONA
+WHERE CLI.STATUS = 'ACT' AND CLI.CODE_EG <> 'G'
+  AND CLI.CIRCUIT = :circuit;
+```
+
+---
+
+### REF-06 · Detalle de clientes out por incidencia/circuito (multi-dimensión)
+
+**Fichero:** `main_queries/customers_out_queries_transformer_detail.sql`  
+Query de análisis con todas las dimensiones: circuitos, transformadores, divisiones, condados y towns por incidencia.
+
+```sql
+WITH cte_outage AS (
+  SELECT
+    INC.CONT_INCIDENCIA, INC.COD_ZONA, INC.COD_BRIGADA,
+    AI.COD_INSTAL_USUARIO, AI.B3NAME,
+    AI.AFFECTED_CUST, AI.CIRCUIT, AI.COD_PROVINCIA, AI.COD_POBLACION, AI.NOM_POBLACION AS TOWN,
+    count(distinct AI.CIRCUIT)     OVER (PARTITION BY AI.CONT_INCIDENCIA) AS CIRC_PER_INC,
+    count(AI.COD_INSTAL_USUARIO)   OVER (PARTITION BY AI.CONT_INCIDENCIA, AI.CIRCUIT) AS XFR_PER_CIRCUIT,
+    count(DISTINCT xfr.cod_brigada) OVER (PARTITION BY AI.CONT_INCIDENCIA, AI.CIRCUIT) AS DIVISIONS_AFFECTED,
+    count(distinct ai.cod_provincia) OVER (PARTITION BY AI.CONT_INCIDENCIA, AI.CIRCUIT) AS COUNTIES_AFFECTED,
+    count(distinct ai.cod_poblacion) OVER (PARTITION BY AI.CONT_INCIDENCIA, AI.CIRCUIT) AS TOWNS_AFFECTED,
+    sum(AI.AFFECTED_CUST) OVER (PARTITION BY AI.CONT_INCIDENCIA) AS OUTAGE_PER_INCIDENT,
+    sum(AI.AFFECTED_CUST) OVER (PARTITION BY AI.CONT_INCIDENCIA, AI.CIRCUIT) AS OUTAGE_PER_CIRCUIT,
+    DENSE_RANK() OVER (PARTITION BY AI.CONT_INCIDENCIA, AI.COD_INSTAL_USUARIO ORDER BY AI.FEC_DESDE) AS MY_RANK,
+    AI.FEC_DESDE, AI.FEC_HASTA
+  FROM mv_incidencia inc
+  INNER JOIN mv_ambito_incid ai     ON INC.CONT_INCIDENCIA = AI.CONT_INCIDENCIA
+  INNER JOIN mv_substationcircuit cir ON AI.CIRCUIT = CIR.CIRCUIT
+  INNER JOIN MV_POSICION xfr         ON ai.COD_INSTAL_USUARIO = XFR.CODIGO_CTM
+)
+SELECT * FROM cte_outage WHERE my_rank = 1 AND fec_hasta IS NULL  -- solo transformadores sin restaurar
+  AND CONT_INCIDENCIA = :reposId;
+```
+
+---
+
+### REF-07 · ETR warning colors (RED / PINK)
+
+**Fichero:** `time_calc/ETR_Shades.sql`
+
+```sql
+CASE
+  WHEN INC.FEC_PREVISTA < SYSDATE                                         THEN 'RED'
+  WHEN ((INC.FEC_PREVISTA - SYSDATE) * 24 * 60) BETWEEN 0 AND 30         THEN 'PINK'
+  ELSE 'WHITE'
+END AS WARNING_COLOR,
+TRUNC((INC.FEC_PREVISTA - SYSDATE) * 24 * 60) AS MINUTES_REMAINING
+```
+
+---
+
+### REF-08 · Lookup de divisiones, condados y notification codes
+
+**Fichero:** `basic_lookup_queries.txt`
+
+```sql
+-- Divisiones
+SELECT COD_COMPANY, COD_DIVISION, DES_DIVISION FROM V_ICDS_US_DIVISIONS;
+
+-- Condados
+SELECT COD_COMPANY, COD_COUNTY, DES_COUNTY FROM V_ICDS_US_COUNTIES;
+
+-- Códigos de notificación eléctricos/gas
+SELECT NOTIFTYPE_CODE, NOTIF_TEXT FROM MV_NOTIF_CODE_EG
+WHERE NOTIFTYPE_CODE IN ('EO','ET','EI');
+
+-- Definiciones de reportes de monitoring
+SELECT COD_REPORT, TITLE, DESCRIPTION FROM ICDS_US_MONITORING_REPORTS WHERE TYPE_REPORT = 'EM';
+```
+
+---
+
+### REF-09 · Incidencias activas con desglose de llamadas/EIs/ETs/clientes por división (landing page)
+
+**Fichero:** `main_queries/summary_tests/division_landing_page.sql`
+
+```sql
+-- Llamadas EO activas por división/circuito
+WITH CTE_CALLS AS (
+  SELECT LL.COD_ZONA AS COD_COMPANY, LL.COD_BRIGADA AS COD_DIVISION,
+         NVL(LL.CIRCUIT,' ') AS CIRCUIT, COUNT(LL.TIMESTAMP) AS NUM_CALLS
+  FROM MV_LLAMADA_PROCESADA LL
+  WHERE LL.TIP_LLAMADA = 'EO' AND LL.NOTIF_STATUS NOT IN (0,5)
+  GROUP BY LL.COD_ZONA, LL.COD_BRIGADA, LL.CIRCUIT
+)
+
+-- Incidencias EI activas por división/circuito (maneja MULTIPLE)
+WITH CTE_INCIDENTS AS (
+  SELECT INC.COD_ZONA, INC.COD_BRIGADA, INC.CIRCUIT, COUNT(INC.CONT_INCIDENCIA) AS INCIDENTS
+  FROM MV_INCIDENCIA INC
+  WHERE INC.INCIDENT_TYPE IN ('EI01','EI02','EI04','EI05')
+    AND INC.CONF_PRED_FLAG = 'I' AND INC.IND_DEFAULT != 'S'
+    AND INC.TIP_INCIDENCIA != 'CP' AND INC.NUM_FASE_INCID NOT IN (0,4,5)
+    AND INC.CIRCUIT <> 'MULTIPLE'
+  GROUP BY INC.COD_ZONA, INC.COD_BRIGADA, INC.CIRCUIT
+)
+
+-- Clientes out por división/circuito
+WITH CTE_CUSTOMERS AS (
+  SELECT INC.COD_ZONA, INC.COD_BRIGADA, NVL(AFF.CIRCUIT,' ') AS CIRCUIT,
+         COUNT(DISTINCT AFF.METER_NUM) AS CUSTOMERS_OUT
+  FROM MV_INCIDENCIA INC, MV_AFFECTED_CUSTOMER AFF
+  WHERE INC.CONT_INCIDENCIA = AFF.CONT_INCIDENCIA
+    AND INC.INCIDENT_TYPE IN ('EI01','EI02','EI04','EI05')
+    AND INC.CONF_PRED_FLAG = 'I' AND INC.IND_DEFAULT != 'S'
+    AND INC.NUM_FASE_INCID NOT IN (0,4,5)
+  GROUP BY INC.COD_ZONA, INC.COD_BRIGADA, AFF.CIRCUIT
+)
+```
+
+---
+
+### REF-10 · Incidencias por tipo con PIVOT Oracle
+
+**Fichero:** `subject_area_queries.txt`
+
+```sql
+WITH INCIDENCIAS AS (
+  SELECT COD_ZONA AS COD_COMPANY, COUNT(CONT_INCIDENCIA) AS NUM_INCIDENTS,
+         SUBSTR(INCIDENT_TYPE,1,2) AS INC_TYPE
+  FROM MV_INCIDENCIA
+  GROUP BY COD_ZONA, SUBSTR(INCIDENT_TYPE,1,2)
+)
+SELECT * FROM INCIDENCIAS
+PIVOT (SUM(NUM_INCIDENTS) FOR INC_TYPE IN ('EO' AS EO, 'ET' AS ET, 'EI' AS EI));
+```
+
+---
+
+### REF-11 · Análisis de archivo: tiempo de restauración desde MV_H_FASE_INCID
+
+**Fichero:** `main_queries/Analyze_Archive_data.sql`
+
+```sql
+SELECT DISTINCT
+  INC.CONT_INCIDENCIA, DIV.DES_BRIGADA,
+  INC.REAL_NUMCUSTOUT,
+  SUM(CEIL(AI.real_numcustout)) OVER (PARTITION BY AI.CONT_INCIDENCIA) AS OUTAGE_PER_INCIDENT,
+  STG.FEC_FASE_INCID AS POWER_RESTORE_TIME,
+  INC.FEC_INI_INCIDENCIA
+FROM mv_h_incidencia inc
+INNER JOIN MV_H_FASE_INCID stg
+       ON INC.CONT_INCIDENCIA = STG.CONT_INCIDENCIA AND INC.NUM_FASE_INCID = STG.NUM_FASE_INCID
+LEFT  JOIN mv_brigada div        ON INC.COD_BRIGADA = DIV.COD_BRIGADA
+LEFT  JOIN mv_h_ambito_incid ai  ON INC.CONT_INCIDENCIA = AI.CONT_INCIDENCIA
+WHERE INC.COD_ZONA = :iOpCo
+  AND nce.NOTIFTYPE_CODE = 'EI' AND INC.NUM_FASE_INCID = 5  -- completadas
+  AND INC.FEC_INI_INCIDENCIA BETWEEN TO_DATE(:dFrom,'MM/DD/YYYY HH24:MI')
+                                  AND TO_DATE(:dTo,  'MM/DD/YYYY HH24:MI');
+```
+
+---
+
+### REF-12 · Smart search: buscar transformer/fuse/poste por SAP_ID o B3NAME
+
+**Fichero:** `smart_search/smart_search_on_map.sql`
+
+```sql
+-- Transformer por SAP_ID (usar MV_POSICION)
+SELECT pos.CIRCUIT, pos.LINE_ROAD, pos.POLE, pos.SAP_ID, pos.B3NAME, pos.FLOC,
+       REGEXP_SUBSTR(pos.floc, '[0-9]{5}$') AS sap_pole_id_last5
+FROM mv_posicion pos
+WHERE pos.cod_zona = :iOpCo AND pos.SAP_ID = :sapId;
+
+-- Fuse por nombre o voltage (usar MV_ELEM_MP)
+SELECT dvc.VOLTAGE, dvc.B3NAME, dvc.NOM_POBLACION, dvc.FLOC, dvc.LINE_ROAD, dvc.ELTEXT
+FROM MV_ELEM_MP dvc
+WHERE dvc.COD_ZONA = :iOpCo AND dvc.ELNAME = 'FUSE';
+
+-- Poste (NY) por línea/town
+SELECT pl.Z_GISID, pl.FLOC, pl.TOWNNAME, pl.LINEROAD, pl.LEGPOLENUM, pl.CIRCUIT
+FROM mv_master_pole pl WHERE pl.COD_ZONA = :iOpCo;
+
+-- Poste (ME/CMP) por línea/town
+SELECT pl.Z_GISID, pl.FLOC, pl.TOWNNAME, pl.LINEROAD, pl.LEGPOLENUM
+FROM mv_master_pole_me pl WHERE pl.lineroad LIKE :road AND pl.townname = :town;
+
+-- Cross-reference con master_lookup@repos_01_oms
+SELECT mlu.serialnum, mlu.predictable, mlu.zipcode
+FROM master_lookup@repos_01_oms mlu WHERE mlu.b3name = :b3name;
+```
+
+---
+
+### REF-13 · Sanity check: llamadas por condado/town/carretera
+
+**Fichero:** `main_queries/customers_out_sanity_check.sql`
+
+```sql
+SELECT LP.COD_ZONA, LP.NOM_PROVINCIA, LP.NOM_POBLA_ACTUAL,
+       CLI.NOM_CALLE AS ROAD_NAME, LP.TIMESTAMP, LP.TIP_LLAMADA
+FROM MV_LLAMADA_PROCESADA LP
+INNER JOIN mv_cliente_sic cli ON LP.METER_NUM = CLI.CUPS
+WHERE LP.TIP_LLAMADA IN ('EO','ET')
+  AND LP.COD_ZONA = :iOpCo
+  AND LP.COD_POBLACION IS NOT NULL
+  AND LP.FEC_LLAMADA >= TO_DATE(:dFrom,'MM/DD/YYYY HH24:MI')
+  AND LP.FEC_LLAMADA <  TO_DATE(:dTo,  'MM/DD/YYYY HH24:MI')
+ORDER BY LP.NOM_PROVINCIA, LP.NOM_POBLA_ACTUAL, CLI.NOM_CALLE;
+```
+
+> **Nota de campos de direccion en LLAMADA_PROCESADA**: `NOM_POBLA_ACTUAL` = town del cliente, `NOM_PROVINCIA` = condado. `COD_POBLACION`, `LINE_ROAD` y `COD_PROVINCIA` son del transformador, no del cliente.
+
+---
+
+### REF-14 · Manejo del circuito MULTIPLE en incidencias con varios circuitos
+
+**Fichero:** `main_queries/summary_tests/division_landing_page.sql`
+
+```sql
+-- Incidencias con circuito MULTIPLE: tomar el primer circuito de AMBITO_INCID
+UNION
+SELECT INC.COD_ZONA, INC.COD_BRIGADA, AUX_CIR.CIRCUIT, COUNT(INC.CONT_INCIDENCIA) AS INCIDENTS
+FROM MV_INCIDENCIA INC,
+     (SELECT CIRCUIT, CONT_INCIDENCIA,
+             ROW_NUMBER() OVER (PARTITION BY CONT_INCIDENCIA ORDER BY CONT_INCIDENCIA) AS RN
+      FROM (SELECT COUNT(DISTINCT CONT_AMBITO) AS CIRCUIT_COUNT, CIRCUIT, CONT_INCIDENCIA
+            FROM MV_AMBITO_INCID GROUP BY CONT_INCIDENCIA, CIRCUIT) NUMCIRCUITS) AUX_CIR
+WHERE INC.CONT_INCIDENCIA = AUX_CIR.CONT_INCIDENCIA AND AUX_CIR.RN = 1
+  AND INC.CIRCUIT = 'MULTIPLE'
+  AND INC.INCIDENT_TYPE IN ('EI01','EI02','EI04')
+  AND INC.NUM_FASE_INCID NOT IN (0,4,5)
+GROUP BY INC.COD_ZONA, INC.COD_BRIGADA, AUX_CIR.CIRCUIT
+```
+
+---
+
+### REF-15 · Relación switch/trigger → transformer (MV_TRIGGER_INFO)
+
+**Fichero:** `transformer_queires/switch_transformer_relationship.sql`
+
+```sql
+-- La hora del switch debe coincidir con FEC_DESDE del transformador (apertura)
+SELECT SW.B3NAME, SW.TRIGGER_NUMBER, SW.TRIGGER_STATE,
+       TO_CHAR(SW.DATE_TIME,'yyyy-mm-dd hh24:mi:ss') AS SWITCH_TIME,
+       TO_CHAR(AI.FEC_DESDE, 'yyyy-mm-dd hh24:mi:ss') AS TRANSFORMER_START_TIME,
+       TO_CHAR(AI.FEC_HASTA, 'yyyy-mm-dd hh24:mi:ss') AS TRANSFORMER_END_TIME
+FROM mv_trigger_info sw
+INNER JOIN mv_ambito_incid ai
+       ON SW.CONT_INCIDENCIA = AI.CONT_INCIDENCIA AND SW.TRIGGER_NUMBER = AI.TRIGGER_NUMBER
+WHERE SW.CONT_INCIDENCIA = :reposId;
+-- Para cierre: usar AI.ENERGIZED_TRIGGER_NUMBER en lugar de TRIGGER_NUMBER
+```
+
+---
+
+## Tablas adicionales (descubiertas en basic_queries)
+
+| Tabla | Descripción inferida | Campos clave identificados |
+|-------|----------------------|---------------------------|
+| MV_POBLACION | Municipios/towns | COD_POBLACION, DES_POBLACION, COD_PROVINCIA, COD_ZONA |
+| MV_POBLACION_ME | Towns Maine | (mismos) |
+| MV_POSICION | Posiciones de transformadores en la red | CODIGO_CTM, B3NAME, COD_BRIGADA, LINE_ROAD, POLE, FLOC, SAP_ID, COD_APOYO, NOM_POBLACION, COD_ZONA, CIRCUIT |
+| MV_POSICION_ME | Transformadores Maine | (mismos) |
+| MV_MASTER_POLE | Postes NY | Z_GISID, SAPID, FLOC, LINEROAD, FLOCROAD, CIRCUIT, TOWNNAME, LEGPOLENUM, DIVCODE, RDINT1, RDINT2, STRUCTTYPE |
+| MV_MASTER_POLE_ME | Postes Maine | (mismos + ADDRESS para road 911) |
+| MV_H_FASE_INCID | Fases históricas de incidencias (para tiempo de restauración) | CONT_INCIDENCIA, NUM_FASE_INCID, FEC_FASE_INCID |
+| MV_TRIGGER_INFO | Eventos de switch/apertura en la red | CONT_INCIDENCIA, TRIGGER_NUMBER, TRIGGER_STATE, DATE_TIME, GM_DATE_TIME, B3NAME, ELNAME, COMMENTS |
+| master_lookup@repos_01_oms | Lookup maestro de transformadores (DB link OMS) | B3NAME, SAPID, LEGPOLE, SERIALNUM, PREDICTABLE, ZIPCODE |
+| V_CUSTOMERS_OUT | Vista de clientes actuales sin luz | (CONT_INCIDENCIA, clientes out) |
+| V_H_CUSTOMERS_OUT | Vista histórica de clientes sin luz | (mismos) |
+| V_ICDS_US_DIVISIONS | Catálogo de divisiones | COD_COMPANY, COD_DIVISION, DES_DIVISION |
+| V_ICDS_US_COUNTIES | Catálogo de condados | COD_COMPANY, COD_COUNTY, DES_COUNTY |
+| ICDS_US_MONITORING_REPORTS | Definición de reportes de monitoring | COD_REPORT, TITLE, DESCRIPTION, IMAGE, HEADER_JSON, FIELDS_JSON, TYPE_REPORT, SUBTYPE_REPORT |
+| MV_BRIGADA_ME | Divisiones Maine | COD_BRIGADA, DES_BRIGADA, COD_ZONA |
+| V_ICDS_SUMMARY_DATA_DIVISION | Vista resumen por división (análogo a V_ICDS_SUMMARY_DATA_CIRCUIT) | COD_COMPANY, COD_DIVISION, CALLS, INCIDENTS, CUSTOMERS_OUT |
+| MV_ELEM_MP | Elementos de red (dispositivos): fusibles, reclosers, switches | B1NAME, B2NAME, B3NAME, ELNAME, ELTEXT, CIRCUIT, LINE_ROAD, POLE, FLOC, VOLTAGE, PREDICTABLE, DEVICE_TYPE, SAP_ID, COD_APOYO, TEX_ACCESO, NOM_NOMBRE, COD_ELEMENTO |
