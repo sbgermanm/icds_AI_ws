@@ -77,23 +77,20 @@ WITH main_t AS (
         )
         AND inc.FEC_INI_INCIDENCIA >= TO_DATE(:dStartDate, 'MM/DD/YYYY HH24:MI')
         AND inc.FEC_INI_INCIDENCIA <= TO_DATE(:dEndDate, 'MM/DD/YYYY HH24:MI')
-        AND (
-            :lstDivisions IS NULL
-            OR inc.COD_BRIGADA IN (:lstDivisions)
-        ) -- Circuit / Storm Area filter (mutually exclusive — SqlBuilder injects one):
-        -- Option A · filter by circuit list:
-        --   AND (:lstCircuits IS NULL OR inc.CIRCUIT IN (:lstCircuits))
+        AND (:lstCircuits IS NULL OR inc.CIRCUIT IN (:lstCircuits))
+
+         -- DIVISION / Storm Area filter (mutually exclusive — SqlBuilder injects one):
+        -- Option A · filter by DIVISION list:
+        -- AND (
+        --     :lstDivisions IS NULL
+        --     OR inc.COD_BRIGADA IN (:lstDivisions)
+        -- )
         -- Option B · filter by storm area (uses MV_STORM_BREAKOUT_CIRCUIT_ME for CMP):
         --   AND EXISTS (SELECT 1 FROM MV_STORM_BREAKOUT_CIRCUIT sbc
         --               WHERE sbc.CIRCUIT = inc.CIRCUIT
         --                 AND sbc.ID_SB_AREA IN (:lstStormAreas))
-        AND (
-            :lstCircuits IS NULL
-            OR inc.CIRCUIT IN (:lstCircuits)
-        )
         AND inc.NUM_FASE_INCID IN (:lstIncidentStages)
-    UNION
-    ALL
+    UNION     ALL
     /* ----------------------------------------------------------
      Closed / archived incidents (NUM_FASE_INCID = 5)
      SqlBuilder appends this branch only when lstNotifStages
@@ -138,20 +135,19 @@ WITH main_t AS (
         )
         AND inc.FEC_INI_INCIDENCIA >= TO_DATE(:dStartDate, 'MM/DD/YYYY HH24:MI')
         AND inc.FEC_INI_INCIDENCIA <= TO_DATE(:dEndDate, 'MM/DD/YYYY HH24:MI')
-        AND (
-            :lstDivisions IS NULL
-            OR inc.COD_BRIGADA IN (:lstDivisions)
-        ) -- Circuit / Storm Area filter (mutually exclusive — SqlBuilder injects one):
-        -- Option A · filter by circuit list:
-        --   AND (:lstCircuits IS NULL OR inc.CIRCUIT IN (:lstCircuits))
+        AND (:lstCircuits IS NULL OR inc.CIRCUIT IN (:lstCircuits))
+
+         -- DIVISION / Storm Area filter (mutually exclusive — SqlBuilder injects one):
+        -- Option A · filter by DIVISION list:
+        -- AND (
+        --     :lstDivisions IS NULL
+        --     OR inc.COD_BRIGADA IN (:lstDivisions)
+        -- )
         -- Option B · filter by storm area (uses MV_STORM_BREAKOUT_CIRCUIT_ME for CMP):
         --   AND EXISTS (SELECT 1 FROM MV_STORM_BREAKOUT_CIRCUIT sbc
         --               WHERE sbc.CIRCUIT = inc.CIRCUIT
         --                 AND sbc.ID_SB_AREA IN (:lstStormAreas))
-        AND (
-            :lstCircuits IS NULL
-            OR inc.CIRCUIT IN (:lstCircuits)
-        )
+        AND inc.NUM_FASE_INCID IN (:lstIncidentStages)
 ),
 /* ------------------------------------------------------------------
  ETR change history from OMS SAP outage messages (DB-link).
