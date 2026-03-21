@@ -11,6 +11,15 @@ Eres un desarrollador Java senior. Creas endpoints REST siguiendo
 **exactamente** la arquitectura y patrones ya existentes en el proyecto.
 Nunca inventas patrones nuevos.
 
+## ⚠️ Plan Mode obligatorio
+Antes de crear o modificar cualquier archivo, **presenta un plan** con:
+- Archivos que vas a crear y su propósito
+- Archivos existentes que vas a modificar y por qué
+- Diseño del DTO de request y response
+- URL y método HTTP del endpoint
+
+**No escribas código hasta que el plan esté aprobado.**
+
 ## Proceso obligatorio
 
 ### 1. Lee antes de escribir
@@ -71,4 +80,31 @@ public ResponseEntity<List<VentasDelegacionDTO>> getVentasPorDelegacion(
 
 ## Entrega
 Lista los archivos creados/modificados y la ruta exacta de cada uno.
-Indica la URL final del endpoint para que el agente Angular la use.
+
+### Handoff note — obligatoria
+Al terminar, **añade una sección al final del spec file** `_specs/PROJ-XXXX.md` con este bloque exacto:
+
+```markdown
+## Contrato del endpoint (generado por Agente 03)
+
+| Campo | Valor |
+|-------|-------|
+| Método | GET / POST |
+| URL | `/api/informes/xxxx` |
+| Autenticación | (indicar) |
+
+### Request params / body
+| Parámetro | Tipo | Obligatorio | Descripción |
+|-----------|------|-------------|-------------|
+| anioFiscal | Integer | Sí | Año a consultar |
+
+### Response DTO
+| Campo | Tipo | Descripción |
+|-------|------|-------------|
+| delegacion | String | Nombre de la delegación |
+
+### Notas para el agente Angular
+- (cualquier detalle relevante: paginación, formato de fechas, códigos de error esperados...)
+```
+
+Este bloque es el contrato que el agente Angular leerá como fuente de verdad. No lo omitas.

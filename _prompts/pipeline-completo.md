@@ -36,6 +36,25 @@ Actualiza _queries/_index.md con la nueva entrada
 
 ## PASO 3 — Crear endpoint Java
 
+### Plantilla (cualquier ticket)
+
+```
+Actúa como el agente definido en .cursor/rules/03-java-backend-agent.mdc
+
+Lee el spec en _specs/PROJ-XXXX.md
+Lee la query definida en _queries/PROJ-XXXX.sql
+Lee la arquitectura en _arquitectura/java-arquitectura.md
+
+[INSTRUCCIONES ESPECÍFICAS DEL TICKET — sustituye este bloque]
+Crea un nuevo report similar al último que creamos (endpoint: ruta/al/Controller.java existente) usando la query indicada.
+...
+
+Al terminar la implementación, añade la sección "Contrato del endpoint" al final
+de _specs/PROJ-XXXX.md tal como indica la regla. El agente Angular la necesita.
+```
+
+### Ejemplo listo — ICDSDEV-422 (Well-Managed ETR)
+
 ```
 Actúa como el agente definido en .cursor/rules/03-java-backend-agent.mdc
 
@@ -43,28 +62,53 @@ Lee el spec en _specs/ICDSDEV-422.md
 Lee la query definida en _queries/ICDSDEV-422.sql
 Lee la arquitectura en _arquitectura/java-arquitectura.md
 
+Crea un nuevo report similar al último que creamos (endpoint: backend/src/main/java/avangrid/icds/reportsstdelect/controller/NyReliabilityIndexesReportController.java) usando la query indicada.
 
-Crea un nuevo report similar al ultimo que creamos (endpoint: backend/src/main/java/avangrid/icds/reportsstdelect/controller/NyReliabilityIndexesReportController.java) usando la query indicada.
+La query es para cuando la opco es 0 (que es 1 OR 2), 1 o 2. Cuando la opco es 3, hay que usar las tablas alternativas indicadas en el archivo de la query.
+Además, la query tiene un join que une los open incidents (lstIncidentStages in 0..4) con los closed incidents (tablas _H_, lstIncidentStages 5). Programáticamente, crea la query en el sqlBuilder por partes y haz el UNION solo si hay open y closed; si no, solo el que corresponda (lstIncidentStages no puede venir vacío).
+Además, programáticamente, como en otros sitios, si el filtro es "DIVISION" usa la Option A, y si es AREA la opción B.
 
-La query es para cuando la opco es 0 (que es 1 OR 2), 1 o 2. Cuando la opco es 3, hay que usar las tablas alternativas indicadas en el archivo de la query. 
-Ademas, la query tiene un join que une los open incidents (lstIncidentStages in 0..4) con los closed incidents (tablas _H_, lstIncidentStages-5). Programatically, crea la query en el sqlBuilder por parte y haz el union solo si hay open y closed, si no, solo el que corresponda (lstIncidentStages no puede venir vacio).
-Ademas, programaticamnete, como en otros sitios, si el filtro es "DIVISION" usa la Option A, y si es AREA la opcion B
+Al terminar la implementación, añade la sección "Contrato del endpoint" al final
+de _specs/ICDSDEV-422.md tal como indica la regla. El agente Angular la necesita.
 ```
 
 ---
 
 ## PASO 4 — Crear componente Angular
 
+### Plantilla (cualquier ticket)
+
 ```
 Actúa como el agente definido en .cursor/rules/04-angular-frontend-agent.mdc
 
-Lee el spec en _specs/ICDSDEV-422.md
-Lee la arquitectura en _arquitectura/angular-arquitectura.md
-El endpoint a usar es: /api/reports/well-managed-etr
+Lee el spec en _specs/PROJ-XXXX.md — al final encontrarás la sección
+"Contrato del endpoint" que dejó el agente Java. Úsala como fuente de verdad
+para la URL, parámetros y DTO. No uses ninguna URL que no venga de ahí.
 
-Crea un nuevo report llamado well-managed-etr haciendo similar los que estan en frontend/src/app/pages/standardElectricReports. estos reports tienen un acordeon con tres secciones, criteria, table result y detalle. El criteria es un componente que tiene varios componentes que se habilitan o no dependiendo del repo. Mira las specs para ver cuales debes habilitar. A su vez los compoenntes de ese filtro pueden ocular filtros que no aplican, como los lstIncidentStages.
-La tabla es un componenet comun para todos que se configura con las columnas que aplican en cada repo
-El detalle lo mismo, como podras ver tienes varias secciones que muestran el detalle de un incidente.
+Lee la arquitectura en _arquitectura/angular-arquitectura.md
+
+[INSTRUCCIONES ESPECÍFICAS DEL TICKET — sustituye este bloque]
+Crea un nuevo report llamado XXXX haciendo similar los que están en
+frontend/src/app/pages/standardElectricReports.
+...
+```
+
+### Ejemplo listo — ICDSDEV-422 (Well-Managed ETR)
+
+```
+Actúa como el agente definido en .cursor/rules/04-angular-frontend-agent.mdc
+
+Lee el spec en _specs/ICDSDEV-422.md — al final debe estar la sección
+"Contrato del endpoint" (agente Java). Úsala como fuente de verdad para URL,
+parámetros y DTO. Si aún no existe, usa como referencia de este ticket la URL
+`/api/reports/well-managed-etr` hasta que el contrato quede documentado en el spec.
+
+Lee la arquitectura en _arquitectura/angular-arquitectura.md
+
+Crea un nuevo report llamado well-managed-etr haciendo similar los que están en
+frontend/src/app/pages/standardElectricReports. Estos reports tienen un acordeón con tres secciones: criteria, table result y detalle. El criteria es un componente que tiene varios subcomponentes que se habilitan o no dependiendo del repo. Mira las specs para ver cuáles debes habilitar. A su vez los componentes de ese filtro pueden ocultar filtros que no aplican, como lstIncidentStages.
+La tabla es un componente común para todos que se configura con las columnas que aplican en cada repo.
+El detalle es igual: varias secciones que muestran el detalle de un incidente.
 Integra este report en esos elementos.
 ```
 
@@ -80,3 +124,5 @@ Revisa que todo es consistente para PROJ-XXXX:
 Comprueba que los parámetros de la query coinciden con los del spec.
 Indica cualquier discrepancia que encuentres.
 ```
+
+Para revisar solo ICDSDEV-422, cambia `PROJ-XXXX` por `ICDSDEV-422` en el bloque anterior.
